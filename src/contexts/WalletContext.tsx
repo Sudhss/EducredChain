@@ -1,10 +1,22 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
-import { initContract, getContract } from '../services/contractService';
+import { initContract, getContract, mintCredential } from '../services/contractService';
+import { uploadToIPFS } from '../services/ipfsService';
+import { toast } from 'react-hot-toast';
 
 declare global {
   interface Window {
     ethereum?: any;
   }
+}
+
+interface Credential {
+  id: string;
+  title: string;
+  description: string;
+  issuer: string;
+  issueDate: Date;
+  ipfsHash: string;
+  isRevoked: boolean;
 }
 
 interface WalletContextType {
@@ -19,6 +31,16 @@ interface WalletContextType {
   contract: any | null;
   isContractInitialized: boolean;
   contractError: string | null;
+  credentials: Credential[];
+  isUploading: boolean;
+  uploadProgress: number;
+  uploadAndMintCredential: (
+    file: File, 
+    title: string, 
+    description: string
+  ) => Promise<void>;
+  loadCredentials: () => Promise<void>;
+  isRefreshing: boolean;
 }
 
 const WalletContext = createContext<WalletContextType>({
@@ -33,6 +55,12 @@ const WalletContext = createContext<WalletContextType>({
   contract: null,
   isContractInitialized: false,
   contractError: null,
+  credentials: [],
+  isUploading: false,
+  uploadProgress: 0,
+  uploadAndMintCredential: async () => {},
+  loadCredentials: async () => {},
+  isRefreshing: false
 });
 
 export const useWallet = () => useContext(WalletContext);
@@ -51,7 +79,11 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
   const [contractError, setContractError] = useState<string | null>(null);
   const isMetaMaskInstalled = typeof window.ethereum !== 'undefined' && window.ethereum.isMetaMask;
 
-  // Initialize contract when address or chain changes
+  const [credentials, setCredentials] = useState<Credential[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   useEffect(() => {
     const initializeContract = async () => {
       if (!address || !isMetaMaskInstalled) return;
@@ -71,7 +103,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     initializeContract();
   }, [address, isMetaMaskInstalled]);
 
-  // Check if user is already connected
   useEffect(() => {
     const checkConnection = async () => {
       if (!isMetaMaskInstalled) return;
@@ -90,7 +121,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
 
     checkConnection();
 
-    // Set up event listeners
     if (window.ethereum) {
       window.ethereum.on('accountsChanged', handleAccountsChanged);
       window.ethereum.on('chainChanged', handleChainChanged);
@@ -104,7 +134,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
 
   const handleAccountsChanged = (accounts: string[]) => {
     if (accounts.length === 0) {
-      // MetaMask is locked or the user has not connected any accounts
       setAddress(null);
     } else if (accounts[0] !== address) {
       setAddress(accounts[0]);
@@ -113,7 +142,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
 
   const handleChainChanged = (newChainId: string) => {
     setChainId(newChainId);
-    // Reload the page to ensure everything is up-to-date
     window.location.reload();
   };
 
@@ -127,18 +155,15 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
       setError(null);
       setIsConnecting(true);
       
-      // Request account access
       const accounts = await window.ethereum.request({ 
         method: 'eth_requestAccounts' 
       });
       
-      // Get the current chain ID
       const chainId = await window.ethereum.request({ method: 'eth_chainId' });
       
       setAddress(accounts[0]);
       setChainId(chainId);
       
-      // If not on Mumbai testnet, prompt to switch
       if (chainId !== '0x13881') {
         await switchToMumbai();
       }
@@ -160,7 +185,6 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
         params: [{ chainId: '0x13881' }], // Mumbai testnet
       });
     } catch (switchError: any) {
-      // This error code indicates that the chain has not been added to MetaMask
       if (switchError.code === 4902) {
         try {
           await window.ethereum.request({
@@ -190,13 +214,84 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     }
   };
 
+  const loadCredentials = useCallback(async () => {
+    if (!address || !contract) return;
+    
+    try {
+      setIsRefreshing(true);
+      const tokenIds = await contract.getTokensByOwner(address);
+      const creds = await Promise.all(
+        tokenIds.map(async (tokenId: any) => {
+          const cred = await contract.getCredential(tokenId);
+          return {
+            id: tokenId.toString(),
+            title: cred.title,
+            description: cred.description,
+            issuer: cred.issuer,
+            issueDate: new Date(cred.issueDate * 1000),
+            ipfsHash: cred.ipfsHash,
+            isRevoked: cred.isRevoked
+          };
+        })
+      );
+      setCredentials(creds);
+    } catch (err) {
+      console.error('Error loading credentials:', err);
+      toast.error('Failed to load credentials');
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [address, contract]);
+
+  const uploadAndMintCredential = useCallback(async (
+    file: File, 
+    title: string, 
+    description: string
+  ) => {
+    if (!address || !contract) {
+      toast.error('Please connect your wallet first');
+      return;
+    }
+
+    try {
+      setIsUploading(true);
+      setUploadProgress(0);
+      
+      const ipfsHash = await uploadToIPFS(file, (progress) => {
+        setUploadProgress(Math.round((progress.loaded / progress.total) * 100));
+      });
+      
+      const tx = await mintCredential(contract, address, title, description, 'EduCred Chain', ipfsHash);
+      await tx.wait();
+      
+      await loadCredentials();
+      
+      toast.success('Credential minted successfully!');
+      setUploadProgress(0);
+    } catch (error) {
+      console.error('Error in uploadAndMintCredential:', error);
+      toast.error('Failed to mint credential');
+      throw error;
+    } finally {
+      setIsUploading(false);
+      toast.dismiss();
+    }
+  }, [address, contract, loadCredentials]);
+
   const disconnectWallet = useCallback(() => {
     setAddress(null);
     setChainId(null);
     setContract(null);
+    setCredentials([]);
     setIsContractInitialized(false);
     setContractError(null);
   }, []);
+
+  useEffect(() => {
+    if (address && contract) {
+      loadCredentials();
+    }
+  }, [address, contract, loadCredentials]);
 
   const contextValue = useMemo(() => ({
     address,
@@ -210,6 +305,12 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     contract,
     isContractInitialized,
     contractError,
+    credentials,
+    isUploading,
+    uploadProgress,
+    uploadAndMintCredential,
+    loadCredentials,
+    isRefreshing,
   }), [
     address,
     isConnecting,
@@ -222,6 +323,12 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }) => {
     contract,
     isContractInitialized,
     contractError,
+    credentials,
+    isUploading,
+    uploadProgress,
+    uploadAndMintCredential,
+    loadCredentials,
+    isRefreshing,
   ]);
 
   return (
