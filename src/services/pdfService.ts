@@ -1,5 +1,10 @@
-// Mock PDF processing service using pdf.js
-// In a real app, we would use pdf.js to extract text from PDF files
+// src/services/pdfService.ts
+import * as pdfjsLib from 'pdfjs-dist';
+import { TextItem } from 'pdfjs-dist/types/src/display/api';
+
+// Set worker path for pdf.js
+const pdfjsWorker = await import('pdfjs-dist/build/pdf.worker.entry');
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 /**
  * Parse a PDF file and extract its text content
@@ -8,35 +13,29 @@
  * @returns Extracted text content
  */
 export const parsePDF = async (file: File): Promise<string> => {
-  // In a real application, we would use pdf.js to extract text
-  // For demo purposes, we'll simulate the parsing process
-  
   try {
-    // Simulate parsing delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument(arrayBuffer);
+    const pdf = await loadingTask.promise;
     
-    // Return mock content
-    return `
-      CERTIFICATE OF COMPLETION
+    let fullText = '';
+    
+    // Extract text from each page
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items
+        .filter(item => 'str' in item)
+        .map(item => (item as TextItem).str)
+        .join(' ');
       
-      This certifies that [Student Name] has successfully completed
-      the course on Blockchain Technology and Applications
-      
-      Covering topics including:
-      - Distributed Ledger Technology
-      - Smart Contracts
-      - Decentralized Applications
-      - Web3 Integration
-      - Cryptography Fundamentals
-      
-      Issued by: [Issuing Organization]
-      Date: [Issue Date]
-      
-      Verification ID: [Verification Hash]
-    `;
+      fullText += pageText + '\n\n';
+    }
+    
+    return fullText.trim();
   } catch (error) {
     console.error('Error parsing PDF:', error);
-    throw error;
+    throw new Error('Failed to parse PDF. Please ensure the file is valid and not password protected.');
   }
 };
 
@@ -47,8 +46,39 @@ export const parsePDF = async (file: File): Promise<string> => {
  * @returns Data URL of the preview image
  */
 export const generatePDFPreview = async (file: File): Promise<string> => {
-  
-  await new Promise(resolve => setTimeout(resolve, 1000));
-  
-  return 'https://images.pexels.com/photos/8370752/pexels-photo-8370752.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=1';
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument(arrayBuffer);
+    const pdf = await loadingTask.promise;
+    
+    // Get the first page
+    const page = await pdf.getPage(1);
+    
+    // Set scale for better quality
+    const viewport = page.getViewport({ scale: 1.5 });
+    
+    // Create canvas for rendering
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    
+    if (!context) {
+      throw new Error('Could not create canvas context');
+    }
+    
+    // Set canvas dimensions
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+    
+    // Render PDF page to canvas
+    await page.render({
+      canvasContext: context,
+      viewport: viewport
+    }).promise;
+    
+    // Return data URL
+    return canvas.toDataURL('image/jpeg', 0.8);
+  } catch (error) {
+    console.error('Error generating PDF preview:', error);
+    throw new Error('Failed to generate PDF preview');
+  }
 };
