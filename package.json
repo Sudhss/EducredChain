@@ -1,13 +1,14 @@
 {
-  "name": "EduCred-Chain",
+  "name": "@sudhss/educred-chain",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,md}\""
   },
   "dependencies": {
     "@thirdweb-dev/react": "^4.4.5",

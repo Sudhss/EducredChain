@@ -4,7 +4,7 @@
 [![GitHub stars](https://img.shields.io/github/stars/Sudhss/EducredChain?style=social)](https://github.com/Sudhss/EducredChain/stargazers)
 [![GitHub issues](https://img.shields.io/github/issues/Sudhss/EducredChain)](https://github.com/Sudhss/EducredChain/issues)
 
-A decentralized platform for issuing, managing, and verifying educational credentials using blockchain technology. Built with React, TypeScript, and Web3 technologies, EduCred Chain provides a secure and transparent way to handle academic credentials.
+A decentralized platform for secure, verifiable, and tamper-proof educational credentials using blockchain technology. Built with React, TypeScript, and Web3 technologies, EduCred Chain provides a secure and transparent way to handle academic credentials.
 
 ## Features
 
