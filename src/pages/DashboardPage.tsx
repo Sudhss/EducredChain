@@ -1,15 +1,29 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { FileUp, Search, Plus, Brain, Sparkles } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { FileUp, Search, Plus, Brain, Sparkles, Copy, Share2, ExternalLink } from 'lucide-react';
 import { useCredentials, Credential } from '../contexts/CredentialsContext';
 import CredentialCard from '../components/credentials/CredentialCard';
 import AIInteraction from '../components/ai/AIInteraction';
+import { CredentialsGridSkeleton } from '../components/ui/LoadingSkeleton';
+import { copyToClipboard, formatAddress } from '../utils/clipboard';
+import { toast } from 'react-hot-toast';
 
 const DashboardPage = () => {
   const { credentials, isLoading } = useCredentials();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCredential, setSelectedCredential] = useState<Credential | null>(null);
   const [showAIModal, setShowAIModal] = useState(false);
+  const navigate = useNavigate();
+
+  const handleCopyCredentialLink = useCallback((credentialId: string) => {
+    const url = `${window.location.origin}/verify/${credentialId}`;
+    copyToClipboard(url, 'Credential link copied to clipboard!');
+  }, []);
+
+  const handleViewOnExplorer = useCallback((txHash: string) => {
+    const explorerUrl = `https://mumbai.polygonscan.com/tx/${txHash}`;
+    window.open(explorerUrl, '_blank');
+  }, []);
 
   // Filter credentials based on search term
   const filteredCredentials = credentials.filter(cred => 
@@ -59,25 +73,54 @@ const DashboardPage = () => {
 
         {/* Credentials Grid */}
         {isLoading ? (
-          <div className="flex justify-center items-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary-600"></div>
-          </div>
+          <CredentialsGridSkeleton count={3} />
         ) : filteredCredentials.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredCredentials.map((credential) => (
-              <CredentialCard 
-                key={credential.id} 
-                credential={credential} 
-                onClick={() => handleCredentialSelect(credential)}
-              />
+              <div key={credential.id} className="relative group">
+                <CredentialCard 
+                  credential={credential}
+                  onSelect={handleCredentialSelect}
+                />
+                <div className="absolute top-3 right-3 flex space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCopyCredentialLink(credential.id);
+                    }}
+                    className="p-2 bg-white dark:bg-gray-700 rounded-full shadow-md hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                    title="Copy shareable link"
+                  >
+                    <Share2 className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+                  </button>
+                  {credential.txHash && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleViewOnExplorer(credential.txHash);
+                      }}
+                      className="p-2 bg-white dark:bg-gray-700 rounded-full shadow-md hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                      title="View on explorer"
+                    >
+                      <ExternalLink className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+                    </button>
+                  )}
+                </div>
+              </div>
             ))}
           </div>
         ) : (
-          <div className="bg-white rounded-lg shadow-sm p-8 text-center">
-            <div className="flex justify-center mb-4">
-              <FileUp className="h-12 w-12 text-gray-400" />
-            </div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No credentials found</h3>
+          <div className="text-center py-12 bg-white dark:bg-gray-800 rounded-xl shadow-sm">
+            <FileUp className="mx-auto h-12 w-12 text-gray-400" />
+            <h3 className="mt-2 text-lg font-medium text-gray-900 dark:text-gray-100">No credentials found</h3>
+            <p className="mt-1 text-gray-500 dark:text-gray-400">Get started by uploading your first credential.</p>
+            <div className="mt-6">
+              <Link
+                to="/upload"
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+              >
+                <Plus className="-ml-1 mr-2 h-5 w-5" />
+                Upload Credential
             <p className="text-gray-600 mb-6">
               {searchTerm ? 
                 `No credentials matching "${searchTerm}". Try a different search term.` : 
