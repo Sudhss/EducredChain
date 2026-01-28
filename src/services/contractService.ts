@@ -1,7 +1,24 @@
 import { ethers } from 'ethers';
+import { AppError, ValidationError, NetworkError, toAppError } from '../utils/errors';
 
 // Contract address (replace with your deployed contract address)
 const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS || '';
+
+if (!CONTRACT_ADDRESS) {
+  throw new ValidationError('Contract address is not configured. Please set VITE_CONTRACT_ADDRESS in your .env file.');
+}
+
+// Custom error class for contract-related errors
+export class ContractError extends AppError {
+  constructor(message: string, public readonly method?: string, details?: unknown) {
+    super(
+      `Contract operation failed${method ? ` (${method})` : ''}: ${message}`,
+      'CONTRACT_ERROR',
+      500,
+      details
+    );
+  }
+}
 
 // Initialize contract instance
 let contract: ethers.Contract | null = null;
@@ -18,9 +35,9 @@ const EDU_CRED_ABI = [
 ];
 
 // Initialize the contract with provider and signer
-export const initContract = async () => {
+export const initContract = async (): Promise<ethers.Contract> => {
   if (typeof window.ethereum === 'undefined') {
-    throw new Error('Please install MetaMask!');
+    throw new ValidationError('MetaMask is not installed. Please install MetaMask to continue.');
   }
 
   provider = new ethers.providers.Web3Provider(window.ethereum);
@@ -52,12 +69,19 @@ export const mintCredential = async (
 ): Promise<ethers.ContractReceipt> => {
   const contract = getContract();
   try {
+    if (!ethers.utils.isAddress(to)) {
+      throw new ValidationError('Invalid recipient address');
+    }
+    
     const tx = await contract.mintCredential(to, title, description, issuer, ipfsHash);
     const receipt = await tx.wait();
     return receipt;
   } catch (error) {
-    console.error('Error minting credential:', error);
-    throw error;
+    const appError = toAppError(error, 'Failed to mint credential');
+    if (appError.message.includes('user rejected transaction')) {
+      throw new ContractError('Transaction was rejected by user', 'mintCredential');
+    }
+    throw new ContractError(appError.message, 'mintCredential', error);
   }
 };
 
@@ -66,6 +90,11 @@ export const getCredential = async (tokenId: number) => {
   const contract = getContract();
   try {
     const [title, description, issuer, issueDate, ipfsHash, isRevoked] = await contract.getCredential(tokenId);
+    
+    if (!title || !issuer) {
+      throw new ContractError('Credential not found', 'getCredential', { tokenId });
+    }
+    
     return {
       title,
       description,
@@ -75,8 +104,11 @@ export const getCredential = async (tokenId: number) => {
       isRevoked
     };
   } catch (error) {
-    console.error('Error getting credential:', error);
-    throw error;
+    const appError = toAppError(error, 'Failed to get credential');
+    if (appError.message.includes('invalid token ID') || appError.message.includes('nonexistent token')) {
+      throw new ContractError('Credential not found', 'getCredential', { tokenId });
+    }
+    throw new ContractError(appError.message, 'getCredential', error);
   }
 };
 
@@ -88,8 +120,11 @@ export const revokeCredential = async (tokenId: number, reason: string): Promise
     const receipt = await tx.wait();
     return receipt;
   } catch (error) {
-    console.error('Error revoking credential:', error);
-    throw error;
+    const appError = toAppError(error, 'Failed to revoke credential');
+    if (appError.message.includes('not owner')) {
+      throw new ContractError('Only the credential owner can revoke it', 'revokeCredential', { tokenId });
+    }
+    throw new ContractError(appError.message, 'revokeCredential', error);
   }
 };
 
@@ -97,17 +132,32 @@ export const revokeCredential = async (tokenId: number, reason: string): Promise
 export const getTokensByOwner = async (owner: string): Promise<number[]> => {
   const contract = getContract();
   try {
+    if (!ethers.utils.isAddress(owner)) {
+      throw new ValidationError('Invalid owner address');
+    }
+    
     const balance = await contract.balanceOf(owner);
     const tokens: number[] = [];
-  
-    for (let i = 0; i < balance.toNumber(); i++) {
-      const tokenId = await contract.tokenOfOwnerByIndex(owner, i);
-      tokens.push(tokenId.toNumber());
+    
+    // Process tokens in batches to avoid gas issues with large collections
+    const batchSize = 20; // Adjust based on your needs
+    const balanceNum = balance.toNumber();
+    
+    for (let i = 0; i < balanceNum; i += batchSize) {
+      const batchEnd = Math.min(i + batchSize, balanceNum);
+      const batchPromises = [];
+      
+      for (let j = i; j < batchEnd; j++) {
+        batchPromises.push(contract.tokenOfOwnerByIndex(owner, j));
+      }
+      
+      const batchResults = await Promise.all(batchPromises);
+      tokens.push(...batchResults.map(id => id.toNumber()));
     }
-  
+    
     return tokens;
   } catch (error) {
-    console.error('Error getting tokens by owner:', error);
-    throw error;
+    const appError = toAppError(error, 'Failed to get tokens by owner');
+    throw new ContractError(appError.message, 'getTokensByOwner', { owner, error });
   }
 };
