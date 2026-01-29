@@ -37,6 +37,16 @@ let signer: ethers.Signer | null = null;
 let currentAccount: string | null = null;
 let walletChangeListeners: Array<() => void> = [];
 
+// Transaction tracking state
+const transactionStatuses = new Map<string, {
+  hash: string;
+  status: 'pending' | 'confirmed' | 'failed';
+  confirmations: number;
+  gasUsed?: string;
+  error?: string;
+  timestamp: number;
+}>();
+
 // Internal function to clear contract state
 const clearContractState = () => {
   contract = null;
@@ -101,6 +111,54 @@ export class ContractError extends AppError {
     );
   }
 }
+
+// Transaction status interface
+export interface TransactionStatus {
+  hash: string;
+  status: 'pending' | 'confirmed' | 'failed';
+  confirmations: number;
+  gasUsed?: string;
+  error?: string;
+  timestamp: number;
+}
+
+// Helper function to track transaction status
+const trackTransaction = async (tx: ethers.ContractTransaction): Promise<TransactionStatus> => {
+  const status: TransactionStatus = {
+    hash: tx.hash,
+    status: 'pending',
+    confirmations: 0,
+    timestamp: Date.now()
+  };
+  
+  transactionStatuses.set(tx.hash, status);
+  
+  try {
+    const receipt = await tx.wait();
+    
+    // Update status with receipt information
+    status.status = 'confirmed';
+    status.confirmations = receipt.confirmations || 0;
+    status.gasUsed = receipt.gasUsed?.toString();
+    
+    transactionStatuses.set(tx.hash, status);
+    
+    // Clean up old transactions (older than 1 hour)
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    for (const [hash, txStatus] of transactionStatuses.entries()) {
+      if (txStatus.timestamp < oneHourAgo) {
+        transactionStatuses.delete(hash);
+      }
+    }
+    
+    return status;
+  } catch (error) {
+    status.status = 'failed';
+    status.error = error instanceof Error ? error.message : 'Unknown error';
+    transactionStatuses.set(tx.hash, status);
+    return status;
+  }
+};
 
 
 /**
@@ -240,6 +298,30 @@ export const onWalletChange = (listener: () => void): (() => void) => {
   };
 };
 
+/**
+ * Get transaction status by hash
+ * @param hash Transaction hash
+ * @returns Transaction status or null if not found
+ */
+export const getTransactionStatus = (hash: string): TransactionStatus | null => {
+  return transactionStatuses.get(hash) || null;
+};
+
+/**
+ * Get all tracked transactions
+ * @returns Array of all transaction statuses
+ */
+export const getAllTransactions = (): TransactionStatus[] => {
+  return Array.from(transactionStatuses.values()).sort((a, b) => b.timestamp - a.timestamp);
+};
+
+/**
+ * Clear transaction history
+ */
+export const clearTransactionHistory = (): void => {
+  transactionStatuses.clear();
+};
+
 // Mint a new credential
 export const mintCredential = async (
   to: string,
@@ -258,6 +340,10 @@ export const mintCredential = async (
   const contract = getContract();
   try {
     const tx = await contract.mintCredential(to, title, description, issuer, ipfsHash);
+    
+    // Track the transaction
+    await trackTransaction(tx);
+    
     const receipt = await tx.wait();
     return receipt;
   } catch (error) {
@@ -308,6 +394,10 @@ export const revokeCredential = async (tokenId: number, reason: string): Promise
   const contract = getContract();
   try {
     const tx = await contract.revokeCredential(tokenId, reason);
+    
+    // Track the transaction
+    await trackTransaction(tx);
+    
     const receipt = await tx.wait();
     return receipt;
   } catch (error) {
