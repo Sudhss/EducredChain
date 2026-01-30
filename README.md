@@ -15,7 +15,7 @@ A decentralized platform for secure, verifiable, and tamper-proof educational cr
 - **Easy Verification** - Instantly verify the authenticity of any credential
 - **IPFS Storage** - Decentralized storage for credential documents
 
-## Getting Started
+## Getting Started : 
 
 ### Prerequisites
 
