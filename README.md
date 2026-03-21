@@ -119,6 +119,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 Project Link: [https://github.com/Sudhss/EducredChain](https://github.com/Sudhss/EducredChain)
 
-## Author
-Sudhanshu Shukla && Sanjeev Mishra
-
